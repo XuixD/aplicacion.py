@@ -4,7 +4,412 @@
   "image": "mcr.microsoft.com/devcontainers/python:1-3.11-bullseye",
   "customizations": {
     "codespaces": {
-      "openFiles": [
+      "openFiles": [import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+import requests
+import json
+
+# Configuración de la página
+st.set_page_config(
+    page_title="Analytics Deportivo Pro",
+    page_icon="⚽🏀",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Estilos CSS personalizados
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        color: #1f77b4;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .metric-card {
+        background-color: #f0f2f6;
+        padding: 1rem;
+        border-radius: 10px;
+        border-left: 4px solid #1f77b4;
+    }
+    .value-positive {
+        color: #28a745;
+        font-weight: bold;
+    }
+    .value-negative {
+        color: #dc3545;
+        font-weight: bold;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Título principal
+st.markdown('<h1 class="main-header">⚽🏀 ANALYTICS DEPORTIVO PROFESIONAL</h1>', unsafe_allow_html=True)
+
+# Sidebar - Configuración
+st.sidebar.header("⚙️ CONFIGURACIÓN")
+
+deporte = st.sidebar.selectbox(
+    "**DEPORTE**",
+    ["Fútbol", "Baloncesto"],
+    index=0
+)
+
+# Filtros específicos por deporte
+if deporte == "Fútbol":
+    liga = st.sidebar.selectbox(
+        "**LIGA**",
+        ["La Liga", "Premier League", "Serie A", "Bundesliga", "Ligue 1", "Champions League"]
+    )
+    mercado = st.sidebar.selectbox(
+        "**MERCADO**",
+        ["1X2", "Over/Under", "Ambos equipos marcan", "Handicap Asiático"]
+    )
+else:
+    liga = st.sidebar.selectbox(
+        "**LIGA**",
+        ["NBA", "ACB", "Euroleague", "NCAA", "WNBA"]
+    )
+    mercado = st.sidebar.selectbox(
+        "**MERCADO**",
+        ["Moneyline", "Puntos Totales", "Handicap", "Player Props"]
+    )
+
+# Rango de fechas
+fecha_inicio = st.sidebar.date_input(
+    "Desde",
+    datetime.now() - timedelta(days=7)
+)
+fecha_fin = st.sidebar.date_input(
+    "Hasta",
+    datetime.now() + timedelta(days=2)
+)
+
+# Cargar datos de ejemplo
+@st.cache_data
+def cargar_datos_futbol():
+    return pd.DataFrame({
+        'Partido': ['Real Madrid vs Barcelona', 'Manchester City vs Liverpool', 
+                   'Bayern vs Dortmund', 'PSG vs Marseille', 'Juventus vs Inter'],
+        'Fecha': ['2024-01-15', '2024-01-16', '2024-01-17', '2024-01-18', '2024-01-19'],
+        'Cuota_Local': [2.10, 1.95, 1.75, 1.85, 2.25],
+        'Cuota_Empate': [3.40, 3.60, 4.20, 3.75, 3.30],
+        'Cuota_Visitante': [3.10, 3.80, 4.50, 4.10, 3.15],
+        'Probabilidad_Real_Local': [48, 52, 58, 55, 45],
+        'Value_Percent': [8.5, 12.3, 15.2, 9.8, 5.2],
+        'Confianza': ['Alta', 'Alta', 'Media', 'Alta', 'Baja'],
+        'xG_Local': [2.1, 2.4, 2.8, 2.3, 1.8],
+        'xG_Visitante': [1.8, 2.1, 1.5, 1.9, 1.7],
+        'Pick_Recomendado': ['1', '1', 'Over 2.5', 'Ambos Sí', '2'],
+        'Stake_Recomendado': [3, 4, 3, 3, 2]
+    })
+
+@st.cache_data
+def cargar_datos_baloncesto():
+    return pd.DataFrame({
+        'Partido': ['Lakers vs Warriors', 'Celtics vs Bucks', 'Barcelona vs Real Madrid',
+                   'Mavericks vs Suns', 'Heat vs Nuggets'],
+        'Fecha': ['2024-01-15', '2024-01-16', '2024-01-17', '2024-01-18', '2024-01-19'],
+        'Cuota_Local': [1.85, 2.20, 1.65, 1.95, 2.10],
+        'Cuota_Visitante': [2.05, 1.75, 2.25, 1.90, 1.80],
+        'Over_Line': [225.5, 218.0, 165.5, 230.0, 215.5],
+        'Cuota_Over': [1.90, 1.85, 1.95, 1.88, 1.92],
+        'Cuota_Under': [1.90, 1.95, 1.85, 1.92, 1.88],
+        'Probabilidad_Real_Local': [52, 45, 62, 52, 48],
+        'Value_Percent': [12.3, 8.5, 15.8, 6.2, 10.1],
+        'Confianza': ['Alta', 'Media', 'Alta', 'Baja', 'Media'],
+        'Puntos_Esperados': [228, 220, 168, 232, 218],
+        'Pick_Recomendado': ['Local', 'Over', 'Local', 'Visitante', 'Over'],
+        'Stake_Recomendado': [4, 3, 4, 2, 3]
+    })
+
+# Cargar datos según deporte
+if deporte == "Fútbol":
+    df = cargar_datos_futbol()
+else:
+    df = cargar_datos_baloncesto()
+
+# FUNCIONES DE CÁLCULO
+def calcular_ev(probabilidad_real, cuota):
+    return (probabilidad_real / 100 * cuota - 1) * 100
+
+def clasificar_confianza(value_percent):
+    if value_percent > 10:
+        return 'Alta'
+    elif value_percent > 5:
+        return 'Media'
+    else:
+        return 'Baja'
+
+# SECCIÓN 1: KPI PRINCIPALES
+st.markdown("## 📊 MÉTRICAS PRINCIPALES")
+
+col1, col2, col3, col4, col5 = st.columns(5)
+
+with col1:
+    total_bets = len(df)
+    st.metric("Total Events", f"{total_bets}")
+
+with col2:
+    avg_value = df['Value_Percent'].mean()
+    st.metric("Value Promedio", f"{avg_value:.1f}%")
+
+with col3:
+    high_conf = len(df[df['Confianza'] == 'Alta'])
+    st.metric("Alta Confianza", f"{high_conf}")
+
+with col4:
+    expected_roi = df['Value_Percent'].sum() / len(df)
+    st.metric("ROI Esperado", f"{expected_roi:.1f}%")
+
+with col5:
+    success_rate = 62.5  # Esto vendría de datos históricos
+    st.metric("Tasa Éxito", f"{success_rate}%")
+
+# SECCIÓN 2: VALUE BETS IDENTIFICADOS
+st.markdown("## 💰 VALUE BETS IDENTIFICADOS")
+
+# Función para aplicar estilos a la tabla
+def estilo_filas(row):
+    styles = []
+    for val in row:
+        if isinstance(val, (int, float)):
+            if val > 10:
+                styles.append('background-color: #d4edda')
+            elif val > 5:
+                styles.append('background-color: #fff3cd')
+            else:
+                styles.append('background-color: #f8d7da')
+        else:
+            styles.append('')
+    return styles
+
+# Mostrar tabla con estilos
+column_config = {
+    'Partido': st.column_config.TextColumn('Partido', width='large'),
+    'Value_Percent': st.column_config.ProgressColumn(
+        'Value %',
+        format='%.1f%%',
+        min_value=0,
+        max_value=20
+    ),
+    'Confianza': st.column_config.SelectboxColumn(
+        'Confianza',
+        options=['Alta', 'Media', 'Baja']
+    )
+}
+
+st.dataframe(
+    df,
+    column_config=column_config,
+    use_container_width=True,
+    hide_index=True
+)
+
+# SECCIÓN 3: GRÁFICOS DE ANÁLISIS
+st.markdown("## 📈 ANÁLISIS VISUAL")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    # Gráfico de distribución de value
+    fig_dist = px.histogram(
+        df, 
+        x='Value_Percent',
+        title='Distribución del Valor Encontrado',
+        color='Confianza',
+        nbins=10
+    )
+    fig_dist.update_layout(
+        xaxis_title="Value %",
+        yaxis_title="Número de Events"
+    )
+    st.plotly_chart(fig_dist, use_container_width=True)
+
+with col2:
+    # Gráfico de comparación de confianza
+    conf_count = df['Confianza'].value_counts()
+    fig_pie = px.pie(
+        values=conf_count.values,
+        names=conf_count.index,
+        title='Distribución por Nivel de Confianza',
+        color=conf_count.index,
+        color_discrete_map={'Alta':'#28a745', 'Media':'#ffc107', 'Baja':'#dc3545'}
+    )
+    st.plotly_chart(fig_pie, use_container_width=True)
+
+# SECCIÓN 4: PICKS RECOMENDADOS
+st.markdown("## 🎯 PICKS RECOMENDADOS")
+
+for index, row in df.iterrows():
+    with st.container():
+        col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1])
+        
+        with col1:
+            st.subheader(f"🏆 {row['Partido']}")
+            st.caption(f"📅 {row['Fecha']} | 🎯 Pick: **{row['Pick_Recomendado']}**")
+        
+        with col2:
+            cuota = row['Cuota_Local'] if deporte == 'Fútbol' else row.get('Cuota_Local', row.get('Cuota_Over', 0))
+            st.metric("Cuota", f"{cuota:.2f}")
+        
+        with col3:
+            st.metric("Value", f"{row['Value_Percent']:.1f}%")
+        
+        with col4:
+            # Indicador de confianza
+            confianza_color = {'Alta': '🟢', 'Media': '🟡', 'Baja': '🔴'}
+            st.write(f"**{confianza_color[row['Confianza']]} {row['Confianza']}**")
+        
+        with col5:
+            # Stake recomendado (1-5 unidades)
+            stake = "⭐" * row['Stake_Recomendado']
+            st.write(f"**Stake:** {stake}")
+        
+        # Barra de progreso de valor
+        progress_value = min(row['Value_Percent'] / 20, 1.0)
+        st.progress(progress_value)
+        st.markdown("---")
+
+# SECCIÓN 5: ANÁLISIS DETALLADO POR DEPORTE
+st.markdown(f"## 🔍 ANÁLISIS DETALLADO - {deporte.upper()}")
+
+if deporte == "Fútbol":
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        avg_xg = df[['xG_Local', 'xG_Visitante']].mean().mean()
+        st.metric("xG Promedio", f"{avg_xg:.2f}")
+    
+    with col2:
+        ambos_marcan_prob = 65.2  # Ejemplo
+        st.metric("Prob. Ambos Marcan", f"{ambos_marcan_prob}%")
+    
+    with col3:
+        over_25_prob = 58.7  # Ejemplo
+        st.metric("Prob. Over 2.5", f"{over_25_prob}%")
+        
+    # Gráfico de xG
+    fig_xg = go.Figure()
+    fig_xg.add_trace(go.Bar(name='xG Local', x=df['Partido'], y=df['xG_Local']))
+    fig_xg.add_trace(go.Bar(name='xG Visitante', x=df['Partido'], y=df['xG_Visitante']))
+    fig_xg.update_layout(title='Análisis de Goles Esperados (xG)')
+    st.plotly_chart(fig_xg, use_container_width=True)
+
+else:  # Baloncesto
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        avg_points = df['Puntos_Esperados'].mean()
+        st.metric("Puntos Esperados", f"{avg_points:.1f}")
+    
+    with col2:
+        home_advantage = 3.2  # Ejemplo
+        st.metric("Ventaja Local", f"+{home_advantage}")
+    
+    with col3:
+        pace_rating = "Alto"  # Ejemplo
+        st.metric("Ritmo de Juego", pace_rating)
+    
+    # Gráfico de puntos esperados vs línea
+    fig_points = go.Figure()
+    fig_points.add_trace(go.Scatter(
+        name='Puntos Esperados', 
+        x=df['Partido'], 
+        y=df['Puntos_Esperados'],
+        mode='lines+markers'
+    ))
+    if 'Over_Line' in df.columns:
+        fig_points.add_trace(go.Scatter(
+            name='Línea Over/Under', 
+            x=df['Partido'], 
+            y=df['Over_Line'],
+            mode='lines+markers',
+            line=dict(dash='dash')
+        ))
+    fig_points.update_layout(title='Puntos Esperados vs Línea')
+    st.plotly_chart(fig_points, use_container_width=True)
+
+# SECCIÓN 6: HERRAMIENTAS ADICIONALES EN SIDEBAR
+st.sidebar.markdown("---")
+st.sidebar.header("🧮 CALCULADORAS")
+
+with st.sidebar.expander("📊 Calculadora de Value Bets"):
+    st.subheader("Calculadora de Valor")
+    
+    prob_usuario = st.slider("Tu probabilidad estimada (%)", 1, 100, 55)
+    cuota_book = st.number_input("Cuota del bookmaker", min_value=1.1, value=2.0, step=0.1)
+    
+    prob_implícita = (1 / cuota_book) * 100
+    value = calcular_ev(prob_usuario, cuota_book)
+    
+    st.metric("Probabilidad Implícita", f"{prob_implícita:.1f}%")
+    st.metric("Value %", f"{value:.1f}%")
+    
+    if value > 0:
+        st.success("✅ VALUE BET IDENTIFICADO")
+    else:
+        st.error("❌ Sin valor - Evitar apuesta")
+
+with st.sidebar.expander("💸 Gestión de Bankroll"):
+    bankroll = st.number_input("Bankroll total ($)", min_value=100, value=1000)
+    stake_percent = st.slider("% Bankroll por apuesta", 1, 10, 2)
+    confidence = st.selectbox("Confianza del pick", ["Alta", "Media", "Baja"])
+    
+    stake_base = bankroll * (stake_percent / 100)
+    
+    # Ajustar por confianza
+    multiplier = {"Alta": 1.5, "Media": 1.0, "Baja": 0.5}
+    stake_final = stake_base * multiplier[confidence]
+    
+    st.metric("Stake Recomendado", f"${stake_final:.2f}")
+
+# SECCIÓN 7: HISTORIAL Y SEGUIMIENTO
+st.markdown("## 📋 SEGUIMIENTO DE PICKS")
+
+# Simular datos de histórico
+historico = pd.DataFrame({
+    'Fecha': ['2024-01-10', '2024-01-11', '2024-01-12', '2024-01-13', '2024-01-14'],
+    'Pick': ['Real Madrid -1.5', 'Over 2.5 City-Liverpool', 'Barcelona ML', 'Under 215.5', 'Lakers +4.5'],
+    'Resultado': ['✅', '✅', '❌', '✅', '✅'],
+    'Cuota': [1.95, 1.85, 2.10, 1.90, 1.75],
+    'Stake': [3, 4, 3, 2, 3],
+    'Profit': [2.85, 3.40, -3.00, 1.80, 2.25]
+})
+
+st.dataframe(historico, use_container_width=True)
+
+# Métricas de rendimiento histórico
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("Picks Totales", len(historico))
+with col2:
+    aciertos = len(historico[historico['Resultado'] == '✅'])
+    st.metric("Aciertos", aciertos)
+with col3:
+    tasa_acierto = (aciertos / len(historico)) * 100
+    st.metric("Tasa Acierto", f"{tasa_acierto:.1f}%")
+with col4:
+    profit_total = historico['Profit'].sum()
+    st.metric("Profit Total", f"${profit_total:.2f}")
+
+# FOOTER
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center'>
+    <p><strong>⚠️ DISCLAIMER:</strong> Este dashboard es para análisis educativo. Las apuestas conllevan riesgo de pérdida.</p>
+    <p>🔐 Juega responsablemente | 📊 Datos de ejemplo | 🚀 Actualizado diariamente</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Botón para actualizar datos
+if st.button("🔄 Actualizar Datos"):
+    st.cache_data.clear()
+    st.rerun()
         "README.md",
         "streamlit_app.py"
       ]
